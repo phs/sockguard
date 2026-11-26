@@ -1,0 +1,56 @@
+# Fork-only convenience build for feature branches; not part of upstream CI.
+# Builds the repo's own Dockerfile and publishes the image to this fork's
+# ghcr namespace, plus the bare binary as a downloadable artifact.
+name: branch-build
+
+on:
+  push:
+    branches:
+      - "opencode/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  image:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Build image
+        run: |
+          short="$(git rev-parse --short=8 HEAD)"
+          docker build \
+            --build-arg VERSION="3.2.0-dev+branch-${short}" \
+            --build-arg COMMIT="$(git rev-parse HEAD)" \
+            --build-arg BUILD_DATE="$(git show -s --format=%cI HEAD)" \
+            --tag "ghcr.io/phs/sockguard:branch-${short}" \
+            .
+          echo "IMAGE_TAG=branch-${short}" >> "${GITHUB_ENV}"
+
+      - name: Log in to ghcr
+        run: echo "${GITHUB_TOKEN}" | docker login ghcr.io -u "${GITHUB_ACTOR}" --password-stdin
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push image
+        run: docker push "ghcr.io/phs/sockguard:${IMAGE_TAG}"
+
+      - name: Stage the binary as an artifact
+        run: |
+          cid="$(docker create "ghcr.io/phs/sockguard:${IMAGE_TAG}")"
+          docker cp "${cid}:/sockguard" sockguard
+          docker rm "${cid}"
+
+      - name: Upload binary
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: sockguard-${{ env.IMAGE_TAG }}
+          path: sockguard
+          retention-days: 90
