@@ -75,7 +75,7 @@ func LoadWithData(configPath string) (*Config, []byte, error) {
 		return nil, nil, err
 	}
 
-	restoreRuleQueryKeys(&cfg, fileData)
+	restoreRuleMatchKeys(&cfg, fileData)
 
 	applyCompatEnvAliases(&cfg)
 
@@ -472,7 +472,7 @@ func LoadBytes(data []byte) (*Config, error) {
 		return nil, err
 	}
 
-	restoreRuleQueryKeys(&cfg, data)
+	restoreRuleMatchKeys(&cfg, data)
 
 	if err := decodeMutationsStrict(v, &cfg); err != nil {
 		return nil, err

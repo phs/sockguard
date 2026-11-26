@@ -498,6 +498,7 @@ func executeRootCommand(t *testing.T, args ...string) (stdout string, stderr str
 	oldCfgFile := cfgFile
 	oldMatchMethod := matchMethod
 	oldMatchPath := matchPath
+	oldMatchBody := matchBodyArg
 	oldMatchOutput := matchOutput
 	oldMatchProfile := matchProfile
 	oldMatchSourceIP := matchSourceIP
@@ -513,6 +514,7 @@ func executeRootCommand(t *testing.T, args ...string) (stdout string, stderr str
 		cfgFile = oldCfgFile
 		matchMethod = oldMatchMethod
 		matchPath = oldMatchPath
+		matchBodyArg = oldMatchBody
 		matchOutput = oldMatchOutput
 		matchProfile = oldMatchProfile
 		matchSourceIP = oldMatchSourceIP
