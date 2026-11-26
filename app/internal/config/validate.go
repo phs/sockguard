@@ -2091,6 +2091,7 @@ func validateContainerCreateConfig(prefix string, cfg ContainerCreateRequestBody
 	var errs []string
 	errs = append(errs, validateCreateLaunchConfig(prefix+".container_create", cfg.AllowedCommands, cfg.AllowedEntrypoints, cfg.AllowedEnvVars, cfg.DeniedEnvVars, cfg.AllowedEnvValues)...)
 	errs = append(errs, validateCreateImageAllowlist(prefix+".container_create.allowed_images", cfg.AllowedImages)...)
+	errs = append(errs, validateNamePatternEntries(prefix, "container_create.required_name_patterns", cfg.RequiredNamePatterns)...)
 	errs = append(errs, validateHostPathEntries(prefix, "container_create.allowed_bind_mounts", cfg.AllowedBindMounts)...)
 	errs = append(errs, validateHostPathEntries(prefix, "container_create.allowed_devices", cfg.AllowedDevices)...)
 	errs = append(errs, validateLogDriverEntries(prefix, "container_create", cfg.AllowedLogDrivers, cfg.AllowedLogEndpointOptions)...)
@@ -2127,6 +2128,7 @@ func validateLibpodContainerCreateConfig(prefix string, cfg LibpodContainerCreat
 	var errs []string
 	errs = append(errs, validateCreateLaunchConfig(prefix+".libpod_container_create", cfg.AllowedCommands, cfg.AllowedEntrypoints, cfg.AllowedEnvVars, cfg.DeniedEnvVars, cfg.AllowedEnvValues)...)
 	errs = append(errs, validateCreateImageAllowlist(prefix+".libpod_container_create.allowed_images", cfg.AllowedImages)...)
+	errs = append(errs, validateNamePatternEntries(prefix, "libpod_container_create.required_name_patterns", cfg.RequiredNamePatterns)...)
 	errs = append(errs, validateHostPathEntries(prefix, "libpod_container_create.allowed_bind_mounts", cfg.AllowedBindMounts)...)
 	errs = append(errs, validateHostPathEntries(prefix, "libpod_container_create.allowed_devices", cfg.AllowedDevices)...)
 	errs = append(errs, validateLogDriverEntries(prefix, "libpod_container_create", cfg.AllowedLogDrivers, cfg.AllowedLogEndpointOptions)...)
@@ -2138,6 +2140,23 @@ func validateLibpodContainerCreateConfig(prefix string, cfg LibpodContainerCreat
 		errs = append(errs, fmt.Sprintf("%s.libpod_container_create.allowed_namespace_sharing_containers entries must be non-empty container ID or name values, got %q", prefix, entry))
 	}
 	errs = append(errs, validateImageTrustConfig(prefix+".libpod_container_create.image_trust", cfg.ImageTrust, cfg.AllowedImages)...)
+	return errs
+}
+
+// validateNamePatternEntries compiles each entry with the rule-path glob
+// dialect (the same one response.name_patterns compiles through), so a bad
+// pattern fails at startup rather than at first create.
+func validateNamePatternEntries(prefix string, key string, entries []string) []string {
+	var errs []string
+	for i, entry := range entries {
+		if entry == "" {
+			errs = append(errs, fmt.Sprintf("%s.%s[%d] must not be empty", prefix, key, i))
+			continue
+		}
+		if _, err := regexp.Compile("^" + glob.ToRegexString(entry) + "$"); err != nil {
+			errs = append(errs, fmt.Sprintf("%s.%s[%d] is not a valid glob pattern: %v", prefix, key, i, err))
+		}
+	}
 	return errs
 }
 

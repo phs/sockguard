@@ -56,10 +56,15 @@ func (a *containerCreateArgv) UnmarshalJSON(data []byte) error {
 }
 
 type containerCreateRequest struct {
-	Cmd        containerCreateArgv       `json:"Cmd"`
-	Entrypoint containerCreateArgv       `json:"Entrypoint"`
-	Env        []string                  `json:"Env"`
-	Image      string                    `json:"Image"`
+	Cmd        containerCreateArgv `json:"Cmd"`
+	Entrypoint containerCreateArgv `json:"Entrypoint"`
+	Env        []string            `json:"Env"`
+	Image      string              `json:"Image"`
+	// Name is the legacy body-borne container name. The compat route
+	// normally carries the name in the ?name= query parameter, but dockerd
+	// and Podman's compat endpoint also read this field; required_name_patterns
+	// weighs it alongside the query candidates.
+	Name       string                    `json:"Name"`
 	HostConfig containerCreateHostConfig `json:"HostConfig"`
 	User       string                    `json:"User"`
 	Labels     map[string]string         `json:"Labels"`
@@ -320,6 +325,7 @@ func (r *containerCreateRequest) resetForReuse() {
 	r.Entrypoint = r.Entrypoint[:0]
 	r.Env = r.Env[:0]
 	r.Image = ""
+	r.Name = ""
 	r.User = ""
 	r.MacAddress = ""
 	clear(r.Labels)

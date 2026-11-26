@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net/http"
 	"path"
+	"regexp"
 	"slices"
 	"sort"
 	"strconv"
@@ -87,7 +88,13 @@ type ContainerCreateOptions struct {
 	DeniedEnvVars      []string
 	AllowedEnvValues   []string
 	// AllowedImages is an opt-in exact image reference allowlist.
-	AllowedImages            []string
+	AllowedImages []string
+	// RequiredNamePatterns is an opt-in glob list over the container name
+	// this create supplies: the write-side counterpart of
+	// response.name_patterns. The compat route carries the name in the
+	// ?name= query parameter and, as a legacy fallback, the body's Name
+	// field, so every supplied name is weighed.
+	RequiredNamePatterns     []string
 	AllowPrivileged          bool
 	AllowHostNetwork         bool
 	AllowHostPID             bool
@@ -300,6 +307,7 @@ type containerCreatePolicy struct {
 	allowedNamespaceSharingContainers []string
 	denyNamespacePathMode             bool
 	requiredLabels                    []string
+	requiredNamePatterns              []*regexp.Regexp
 	allowSysctls                      bool
 	allowedRuntimes                   []string
 
@@ -367,6 +375,7 @@ func newContainerCreatePolicy(opts ContainerCreateOptions) containerCreatePolicy
 
 	p := containerCreatePolicy{
 		allowedImages:                     newCreateImageAllowlist(opts.AllowedImages),
+		requiredNamePatterns:              compileNamePatterns(opts.RequiredNamePatterns),
 		launch:                            newCreateLaunchPolicy(opts.AllowedCommands, opts.AllowedEntrypoints, opts.AllowedEnvVars, opts.DeniedEnvVars, opts.AllowedEnvValues),
 		allowPrivileged:                   opts.AllowPrivileged,
 		allowHostNetwork:                  opts.AllowHostNetwork,
@@ -1385,7 +1394,10 @@ func (p containerCreatePolicy) inspect(logger *slog.Logger, r *http.Request, nor
 		if reason := p.launch.denyReason(nil, nil, nil, "container create"); reason != "" {
 			return reason, nil
 		}
-		return p.allowedImages.denyReason("", "container create"), nil
+		if reason := p.allowedImages.denyReason("", "container create"); reason != "" {
+			return reason, nil
+		}
+		return p.denyRequiredNameReason(r, ""), nil
 	}
 	// Fail closed if the image trust policy failed to initialize: a
 	// misconfigured trust config must not silently allow all images through.
@@ -1430,6 +1442,10 @@ func (p containerCreatePolicy) inspect(logger *slog.Logger, r *http.Request, nor
 	}
 
 	if reason := p.allowedImages.denyReason(createReq.Image, "container create"); reason != "" {
+		return reason, nil
+	}
+
+	if reason := p.denyRequiredNameReason(r, createReq.Name); reason != "" {
 		return reason, nil
 	}
 
@@ -2708,6 +2724,49 @@ func (p containerCreatePolicy) denySystemPathsReason(hostConfig containerCreateH
 		return "container create denied: clearing ReadonlyPaths (systempaths=unconfined equivalent) is not allowed"
 	}
 	return ""
+}
+
+// denyRequiredNameReason enforces required_name_patterns on the compat
+// create. The name reaches the engine through the ?name= query parameter,
+// its legacy ?fn= twin, or the body's Name field, and which one wins varies
+// by engine version, so every supplied candidate must match: whichever the
+// engine picks is then in scope. With no candidate at all the engine assigns
+// a name, and this gate denies that like any unmatched name.
+func (p containerCreatePolicy) denyRequiredNameReason(r *http.Request, bodyName string) string {
+	if len(p.requiredNamePatterns) == 0 {
+		return ""
+	}
+	var candidates []string
+	if r != nil {
+		if q := r.URL.Query(); q != nil {
+			for _, key := range []string{"name", "fn"} {
+				if v := strings.TrimSpace(q.Get(key)); v != "" {
+					candidates = append(candidates, v)
+				}
+			}
+		}
+	}
+	if v := strings.TrimSpace(bodyName); v != "" {
+		candidates = append(candidates, v)
+	}
+	if len(candidates) == 0 {
+		return "container create denied: the container must be named, and the name must match the required name patterns"
+	}
+	for _, candidate := range candidates {
+		if !matchesAnyCompiledPattern(p.requiredNamePatterns, candidate) {
+			return "container create denied: container name does not match the required name patterns"
+		}
+	}
+	return ""
+}
+
+func matchesAnyCompiledPattern(patterns []*regexp.Regexp, value string) bool {
+	for _, pattern := range patterns {
+		if pattern.MatchString(value) {
+			return true
+		}
+	}
+	return false
 }
 
 func (p containerCreatePolicy) denyRequiredLabelsReason(req containerCreateRequest) string {

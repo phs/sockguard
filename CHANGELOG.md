@@ -54,6 +54,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `GET /libpod/containers/stats` (Podman's collection stats stream) is now classified as long-lived and streaming. It streams by default, but both classifiers only knew the per-container `/containers/{id}/stats` shape, so the stream was cut at the request timeout and held a `max_inflight` slot. It now follows Podman's own query decoding (default on, case-insensitive keys, an explicit `stream=false` stays finite), skips the request deadline and counts against `max_streams`.
 - BuildKit `Control/Status` responses are now capped per gRPC message instead of cumulatively. Status streams build logs for as long as a build runs, but the relay counted every byte of the response against one 64 MiB budget and ended the stream with `RESOURCE_EXHAUSTED` once a long build's output crossed it, so the client lost status for the rest of the build. A single message over the cap is still refused, a truncated frame ends only that stream, and every other RPC keeps the cumulative cap.
 - A hijacked attach or exec session that upgraded with `101 Switching Protocols` is now logged and measured as `101`. The 101 is written straight to the hijacked connection, so the access log, audit log, metrics and trace span kept the wrapper's initial `200` and reported every completed upgrade as a plain success. The proxy now records the upstream status once it has flushed the response head, and a raw-stream `200` still reports `200`.
+- `request_body.libpod_container_create.required_name_patterns`: an opt-in glob list, in the
+  rule-path dialect, over the create body's `name`. A create that names nothing is denied, and so
+  is a name matching no pattern. `podman-remote` sends an empty name whenever `--name` is absent.
+  With the gate on, every container a caller can later address by name in a per-ID route was
+  scoped at create time. Name-prefix rules such as `POST /libpod/containers/team-app-*/exec/create`
+  therefore enforce without ownership or filter injection. Empty (default) adds no restriction.
+
 
 ## [2.4.8] - 2026-11-19
 

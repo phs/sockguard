@@ -7,10 +7,12 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"regexp"
 	"slices"
 	"strings"
 	"time"
 
+	"github.com/codeswhat/sockguard/v3/app/internal/glob"
 	"github.com/codeswhat/sockguard/v3/app/internal/imagefetch"
 	"github.com/codeswhat/sockguard/v3/app/internal/imagetrust"
 )
@@ -47,8 +49,14 @@ type LibpodContainerCreateOptions struct {
 	DeniedEnvVars      []string
 	AllowedEnvValues   []string
 	// AllowedImages is an opt-in exact image reference allowlist.
-	AllowedImages   []string
-	AllowPrivileged bool
+	AllowedImages []string
+	// RequiredNamePatterns is an opt-in glob list over the create body's name
+	// field: the write-side counterpart of response.name_patterns. A create
+	// naming nothing (engine-assigned) or matching no pattern is denied, so
+	// every per-ID route the caller can later reach was scoped at create
+	// time, without ownership or filter injection.
+	RequiredNamePatterns []string
+	AllowPrivileged      bool
 	// AllowHostNetwork/PID/IPC/UserNS/UTS/CgroupNS each permit that
 	// namespace object's nsmode "host" and "path", and while false refuse
 	// any nsmode this package doesn't know (see libpod_namespace.go).
@@ -177,6 +185,7 @@ type LibpodContainerCreateOptions struct {
 type libpodContainerCreatePolicy struct {
 	launch                   createLaunchPolicy
 	allowedImages            createImageAllowlist
+	requiredNamePatterns     []*regexp.Regexp
 	allowPrivileged          bool
 	allowHostNetwork         bool
 	allowHostPID             bool
@@ -258,6 +267,7 @@ func newLibpodContainerCreatePolicy(opts LibpodContainerCreateOptions) libpodCon
 
 	p := libpodContainerCreatePolicy{
 		allowedImages:                     newCreateImageAllowlist(opts.AllowedImages),
+		requiredNamePatterns:              compileNamePatterns(opts.RequiredNamePatterns),
 		launch:                            newCreateLaunchPolicy(opts.AllowedCommands, opts.AllowedEntrypoints, opts.AllowedEnvVars, opts.DeniedEnvVars, opts.AllowedEnvValues),
 		allowPrivileged:                   opts.AllowPrivileged,
 		allowHostNetwork:                  opts.AllowHostNetwork,
@@ -356,6 +366,10 @@ func (p libpodContainerCreatePolicy) inspect(logger *slog.Logger, r *http.Reques
 	}
 
 	if reason := p.allowedImages.denyReason(createReq.Image, "libpod container create"); reason != "" {
+		return reason, nil
+	}
+
+	if reason := p.denyRequiredNameReason(createReq.Name); reason != "" {
 		return reason, nil
 	}
 
@@ -540,6 +554,46 @@ func (p libpodContainerCreatePolicy) denyDockerParityReason(req libpodContainerC
 // cgroupns to their host gates. While a gate is off its namespace can't be
 // the host's, can't be joined by path, and can't use a mode this package
 // doesn't know (see libpod_namespace.go).
+// compileNamePatterns compiles required-name globs with the rule-path glob
+// dialect, anchoring both ends, exactly as response.name_patterns does.
+// Validation compiles the same patterns at startup, so a nil or invalid
+// result here means a directly-constructed policy (tests), not a live config.
+func compileNamePatterns(globs []string) []*regexp.Regexp {
+	if len(globs) == 0 {
+		return nil
+	}
+	out := make([]*regexp.Regexp, 0, len(globs))
+	for _, pattern := range globs {
+		if pattern == "" {
+			continue
+		}
+		compiled, err := regexp.Compile("^" + glob.ToRegexString(pattern) + "$")
+		if err != nil {
+			continue
+		}
+		out = append(out, compiled)
+	}
+	return out
+}
+
+// denyRequiredNameReason enforces required_name_patterns. An empty name is
+// the engine-assigned case (podman-remote sends it whenever --name is
+// absent), and it is denied like any unmatched name: the point of the gate
+// is that every container reachable by name later was named in scope now.
+func (p libpodContainerCreatePolicy) denyRequiredNameReason(name string) string {
+	if len(p.requiredNamePatterns) == 0 {
+		return ""
+	}
+	name = strings.TrimSpace(name)
+	if matchesAnyCompiledPattern(p.requiredNamePatterns, name) {
+		return ""
+	}
+	if name == "" {
+		return "libpod container create denied: the container must be named, and the name must match the required name patterns"
+	}
+	return "libpod container create denied: container name does not match the required name patterns"
+}
+
 func (p libpodContainerCreatePolicy) denyHostNamespaceReason(req libpodContainerCreateRequest) string {
 	gates := [...]struct {
 		allowed bool

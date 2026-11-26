@@ -657,7 +657,14 @@ type ContainerCreateRequestBodyConfig struct {
 	AllowedEnvValues   []string   `mapstructure:"allowed_env_values"`
 	// AllowedImages is an opt-in exact reference allowlist; empty is unrestricted.
 	// Entries require an explicit registry, repository, and tag or digest.
-	AllowedImages            []string               `mapstructure:"allowed_images"`
+	AllowedImages []string `mapstructure:"allowed_images"`
+	// RequiredNamePatterns is an opt-in glob list over the container name the
+	// create supplies, the write-side counterpart of response.name_patterns.
+	// On this route the name rides the ?name= query parameter (and the rarely
+	// used body Name field), so both are checked; a create naming nothing, or
+	// any name matching no pattern, is denied. Patterns use the rule-path
+	// glob dialect; empty means unrestricted, the status quo.
+	RequiredNamePatterns     []string               `mapstructure:"required_name_patterns"`
 	AllowPrivileged          bool                   `mapstructure:"allow_privileged"`
 	AllowHostNetwork         bool                   `mapstructure:"allow_host_network"`
 	AllowHostPID             bool                   `mapstructure:"allow_host_pid"`
@@ -788,8 +795,15 @@ type LibpodContainerCreateRequestBodyConfig struct {
 	AllowedEnvValues   []string   `mapstructure:"allowed_env_values"`
 	// AllowedImages is an opt-in exact reference allowlist; empty is unrestricted.
 	// Entries require an explicit registry, repository, and tag or digest.
-	AllowedImages   []string `mapstructure:"allowed_images"`
-	AllowPrivileged bool     `mapstructure:"allow_privileged"`
+	AllowedImages []string `mapstructure:"allowed_images"`
+	// RequiredNamePatterns is an opt-in glob list over the create body's name
+	// field, the write-side counterpart of response.name_patterns. A create
+	// with an empty name (engine-assigned) or a name matching no pattern is
+	// denied, so every container the caller can later name in a per-ID route
+	// was scoped at create time. Patterns use the rule-path glob dialect;
+	// empty means unrestricted, the status quo.
+	RequiredNamePatterns []string `mapstructure:"required_name_patterns"`
+	AllowPrivileged      bool     `mapstructure:"allow_privileged"`
 	// AllowHostNetwork/PID/IPC/UserNS/UTS/CgroupNS each permit that
 	// namespace object's nsmode "host" and "path". A path can name the
 	// host's namespace, so it needs the same gate. While one is false its
